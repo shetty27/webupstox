@@ -2,3 +2,4 @@ firebase-admin
 upstox_api
 websockets
 asyncio
+git+https://github.com/upstox/upstox-python.git
