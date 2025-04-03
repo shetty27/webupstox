@@ -12,14 +12,16 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 db = firestore.client()
 
-# 🔹 Firestore से Access Token लाने का Function
-def get_access_token():
-    doc_ref = db.collection("config").document("upstox")
-    doc = doc_ref.get()
-    if doc.exists:
-        return doc.to_dict().get("access_token")
-    return None
 
+# ✅ Firestore से Access Token लेना
+def get_access_token():
+    doc_ref = db.collection("tokens").document("upstox")
+    token_data = doc_ref.get().to_dict()
+    if token_data:
+        return token_data.get("access_token")
+    else:
+        return None
+        
 # 🔹 Upstox API Credentials
 API_KEY = "your-upstox-api-key"
 ACCESS_TOKEN = get_access_token()  # Firestore से Access Token लाओ
