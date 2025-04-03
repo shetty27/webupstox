@@ -1,30 +1,50 @@
 import json
 import firebase_admin
-from firebase_admin import credentials, db
+from firebase_admin import credentials, firestore
 from upstox_api.api import Upstox
 import websocket
 import asyncio
 import websockets  # WebSocket Server के लिए
 
-# 🔹 Firebase Auth Setup
-cred = credentials.Certificate("serviceAccountKey.json")  # अपनी Firebase Key का Path दें
-firebase_admin.initialize_app(cred, {"databaseURL": "https://your-firebase-url.firebaseio.com/"})
+# 🔹 Firebase Setup (Firestore Authentication)
+if not firebase_admin._apps:
+    cred = credentials.Certificate("serviceAccountKey.json")
+    firebase_admin.initialize_app(cred)
+db = firestore.client()
+
+# 🔹 Firestore से Access Token लाने का Function
+def get_access_token():
+    doc_ref = db.collection("config").document("upstox")
+    doc = doc_ref.get()
+    if doc.exists:
+        return doc.to_dict().get("access_token")
+    return None
 
 # 🔹 Upstox API Credentials
 API_KEY = "your-upstox-api-key"
-ACCESS_TOKEN = "your-upstox-access-token"
+ACCESS_TOKEN = get_access_token()  # Firestore से Access Token लाओ
+
+if not ACCESS_TOKEN:
+    print("❌ Access Token not found in Firestore!")
+    exit()
 
 # 🔹 Upstox Object Create करें
 u = Upstox(API_KEY, ACCESS_TOKEN)
 u.get_master_contract('NSE_EQ')  # NSE के लिए Master Contract लोड करें
 
-# 🔹 Firebase से Stock List Load करें
-ref = db.reference("/stocks")  # Firebase में जो 3 Lists हैं, उन्हें Read करें
-stock_data = ref.get()
+# 🔹 Firebase Firestore से Stock List Load करें
+def get_stock_list():
+    stock_list_ref = db.collection("StockLists").document("stocks")
+    stock_data = stock_list_ref.get()
+    if stock_data.exists:
+        return stock_data.to_dict()
+    return {}
+
+stock_data = get_stock_list()
 
 all_symbols = []
 if stock_data:
-    all_symbols = stock_data["nifty50"] + stock_data["niftysmallcap50"] + stock_data["niftymidcap50"]
+    all_symbols = stock_data.get("Nifty50", []) + stock_data.get("NiftySmallcap50", []) + stock_data.get("NiftyMidcap50", [])
 
 # 🔹 WebSocket से Real-time Data Send करने के लिए Clients की Dynamic List
 clients = set()
