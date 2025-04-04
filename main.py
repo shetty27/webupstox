@@ -18,25 +18,27 @@ app = FastAPI()
 # 🔹 WebSocket Clients List
 clients = []
 
-# ✅ Firestore से Access Token लेना
+# ✅ Railway से API Key और Secret Key लोड करना
+UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
+UPSTOX_SECRET_KEY = os.getenv("UPSTOX_SECRET_KEY")
+
+# ✅ Firebase से Access Token लेना
 def get_access_token():
     token_ref = db.reference("tokens/upstox")
     token_data = token_ref.get()
     return token_data.get("access_token") if token_data else None
 
-# ✅ Firebase Realtime Database से Stock Lists लाना
+# ✅ Firebase से Stock Lists लाना
 def get_stock_list():
     stock_ref = db.reference("stocks")
     stock_data = stock_ref.get()
-    if stock_data:
-        return {
-            "nifty50": stock_data.get("nifty50", {}),
-            "niftysmallcap50": stock_data.get("niftysmallcap50", {}),
-            "niftymidcap50": stock_data.get("niftymidcap50", {})
-        }
-    return {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
+    return {
+        "nifty50": stock_data.get("nifty50", {}) if stock_data else {},
+        "niftysmallcap50": stock_data.get("niftysmallcap50", {}) if stock_data else {},
+        "niftymidcap50": stock_data.get("niftymidcap50", {}) if stock_data else {}
+    }
 
-# ✅ Upstox API से Live Stock Price लाने का फंक्शन
+# ✅ Upstox API से Live Stock Price लाने का फंक्शन (API Key और Secret Key का उपयोग)
 def get_stock_price(instrument_key):
     access_token = get_access_token()
     if not access_token:
@@ -45,6 +47,8 @@ def get_stock_price(instrument_key):
     url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={instrument_key}"
     headers = {
         "Authorization": f"Bearer {access_token}",
+        "X-Api-Key": UPSTOX_API_KEY,  # ✅ API Key Set करना जरूरी
+        "X-Api-Secret": UPSTOX_SECRET_KEY,
         "Accept": "application/json"
     }
 
@@ -79,7 +83,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await asyncio.sleep(3)  # हर 3 सेकंड में अपडेट करें
     except Exception as e:
-        print(f"WebSocket Error: {e}")
+        print(f"❌ WebSocket Error: {e}")
     finally:
         clients.remove(websocket)
 
