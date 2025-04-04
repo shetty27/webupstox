@@ -1,6 +1,6 @@
 import requests
 import firebase_admin
-from firebase_admin import credentials, db
+from firebase_admin import credentials, firestore
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import os
 import json
@@ -10,13 +10,28 @@ import logging
 # 🔹 Logging Setup (Debugging के लिए)
 logging.basicConfig(level=logging.INFO)
 
+# ✅ Environment Variables Load करना
 DATABASE_URL = os.getenv("DATABASE_URL")
+FIREBASE_CREDENTIALS_JSON = os.getenv("FIREBASE_CREDENTIALS")
 
-# 🔹 Firebase Realtime Database Setup
-if not firebase_admin._apps:
-    firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
-    cred = credentials.Certificate(firebase_credentials)
-    firebase_admin.initialize_app(cred, {"databaseURL": DATABASE_URL})
+if not DATABASE_URL:
+    logging.error("❌ DATABASE_URL is Missing! Check Environment Variables.")
+
+if not FIREBASE_CREDENTIALS_JSON:
+    logging.error("❌ FIREBASE_CREDENTIALS is Missing! Check Environment Variables.")
+
+# 🔹 Firebase Firestore Setup (Prevent Duplicate Initialization)
+try:
+    if not firebase_admin._apps:  # पहले से Initialized न हो, तभी Initialize करें
+        firebase_credentials = json.loads(FIREBASE_CREDENTIALS_JSON)
+        cred = credentials.Certificate(firebase_credentials)
+        firebase_admin.initialize_app(cred)
+        logging.info("✅ Firebase Firestore Initialized Successfully!")
+    
+    db_firestore = firestore.client()
+
+except Exception as e:
+    logging.error(f"❌ Firebase Initialization Error: {e}")
 
 # 🔹 FastAPI Setup
 app = FastAPI()
@@ -28,37 +43,43 @@ clients = set()
 UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
 UPSTOX_SECRET_KEY = os.getenv("UPSTOX_SECRET_KEY")
 
-# ✅ Firebase से Access Token लेना
+# ✅ Firestore से Access Token लेना
 def get_access_token():
     try:
-        token_ref = db.reference("tokens/upstox")
-        token_data = token_ref.get()
-        if token_data:
+        doc_ref = db_firestore.collection("tokens").document("upstox")
+        doc = doc_ref.get()
+
+        if doc.exists:
+            token_data = doc.to_dict()
             return token_data.get("access_token")
-        logging.warning("⚠️ Access Token Not Found in Firebase!")
+
+        logging.warning("⚠️ Access Token Not Found in Firestore!")
         return None
     except Exception as e:
-        logging.error(f"❌ Firebase Access Token Fetch Error: {e}")
+        logging.error(f"❌ Firestore Access Token Fetch Error: {e}")
         return None
 
-# ✅ Firebase से Stock Lists लाना (Realtime Database से)
+# ✅ Firestore से Stock Lists लाना
 def get_stock_list():
     try:
-        ref = db.reference("/")  # ✅ Root Reference लो
-        stock_data = ref.child("stocks").get()  # 🔹 Realtime Database से "stocks" Node लो
+        stock_ref = db_firestore.collection("stocks")
+        docs = stock_ref.stream()
 
-        if not stock_data:
-            logging.warning("⚠️ Firebase Database Empty! No stock data found.")
-            return {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
+        stock_data = {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
 
-        logging.info("✅ Firebase Stock Data Fetched Successfully!")
-        return {
-            "nifty50": stock_data.get("nifty50", {}),
-            "niftysmallcap50": stock_data.get("niftysmallcap50", {}),
-            "niftymidcap50": stock_data.get("niftymidcap50", {})
-        }
+        for doc in docs:
+            data = doc.to_dict()
+            category = data.get("category", "nifty50")
+            stock_name = data.get("stock_name")
+            instrument_key = data.get("instrument_key")
+
+            if category in stock_data:
+                stock_data[category][stock_name] = instrument_key
+
+        logging.info("✅ Firestore Stock Data Fetched Successfully!")
+        return stock_data
     except Exception as e:
-        logging.error(f"❌ Firebase Stock Data Fetch Error: {e}")
+        logging.error(f"❌ Firestore Stock Data Fetch Error: {e}")
         return {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
 
 # ✅ Upstox API से Live Stock Price लाने का फंक्शन
@@ -76,11 +97,20 @@ def get_stock_price(instrument_key):
         "Accept": "application/json"
     }
 
-    response = requests.get(url, headers=headers)
-    if response.status_code == 200:
-        return response.json().get("data", {}).get(instrument_key, {}).get("ltp")
+    try:
+        response = requests.get(url, headers=headers)
+        response_data = response.json()
+
+        if response.status_code == 200:
+            ltp = response_data.get("data", {}).get(instrument_key, {}).get("ltp")
+            if ltp is None:
+                logging.warning(f"⚠️ LTP Not Found in Response: {response_data}")
+            return ltp
+
+        logging.error(f"❌ API Error {response.status_code}: {response_data}")
+    except json.JSONDecodeError:
+        logging.error(f"❌ Invalid JSON Response from API: {response.text}")
     
-    logging.error(f"❌ Failed to fetch price for {instrument_key}: {response.text}")
     return None
 
 # ✅ WebSocket Handler (Live Updates)
