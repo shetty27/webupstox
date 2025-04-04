@@ -28,19 +28,36 @@ UPSTOX_SECRET_KEY = os.getenv("UPSTOX_SECRET_KEY")
 
 # ✅ Firebase से Access Token लेना
 def get_access_token():
-    token_ref = db.reference("tokens/upstox")
-    token_data = token_ref.get()
-    return token_data.get("access_token") if token_data else None
+    try:
+        token_ref = db.reference("tokens/upstox")
+        token_data = token_ref.get()
+        if token_data:
+            return token_data.get("access_token")
+        logging.warning("⚠️ Access Token Not Found in Firebase!")
+        return None
+    except Exception as e:
+        logging.error(f"❌ Firebase Access Token Fetch Error: {e}")
+        return None
 
-# ✅ Firebase से Stock Lists लाना
+# ✅ Firebase से Stock Lists लाना (Realtime Database से)
 def get_stock_list():
-    stock_ref = db.reference("stocks")
-    stock_data = stock_ref.get()
-    return {
-        "nifty50": stock_data.get("nifty50", {}) if stock_data else {},
-        "niftysmallcap50": stock_data.get("niftysmallcap50", {}) if stock_data else {},
-        "niftymidcap50": stock_data.get("niftymidcap50", {}) if stock_data else {}
-    }
+    try:
+        ref = db.reference("/")  # ✅ Root Reference लो
+        stock_data = ref.child("stocks").get()  # 🔹 Realtime Database से "stocks" Node लो
+
+        if not stock_data:
+            logging.warning("⚠️ Firebase Database Empty! No stock data found.")
+            return {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
+
+        logging.info("✅ Firebase Stock Data Fetched Successfully!")
+        return {
+            "nifty50": stock_data.get("nifty50", {}),
+            "niftysmallcap50": stock_data.get("niftysmallcap50", {}),
+            "niftymidcap50": stock_data.get("niftymidcap50", {})
+        }
+    except Exception as e:
+        logging.error(f"❌ Firebase Stock Data Fetch Error: {e}")
+        return {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
 
 # ✅ Upstox API से Live Stock Price लाने का फंक्शन
 def get_stock_price(instrument_key):
