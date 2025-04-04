@@ -1,18 +1,16 @@
 import requests
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, db
 from fastapi import FastAPI, WebSocket
 import os
 import json
 import asyncio
 
-# 🔹 Firebase Setup
+# 🔹 Firebase Realtime Database Setup
 if not firebase_admin._apps:
     firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
     cred = credentials.Certificate(firebase_credentials)
-    firebase_admin.initialize_app(cred)
-
-db = firestore.client()
+    firebase_admin.initialize_app(cred, {"databaseURL": "https://your-project-id.firebaseio.com"})
 
 # 🔹 FastAPI Setup
 app = FastAPI()
@@ -22,21 +20,21 @@ clients = []
 
 # ✅ Firestore से Access Token लेना
 def get_access_token():
-    doc_ref = db.collection("tokens").document("upstox")
-    token_data = doc_ref.get().to_dict()
+    token_ref = db.reference("tokens/upstox")
+    token_data = token_ref.get()
     return token_data.get("access_token") if token_data else None
 
-# ✅ Firestore से Nifty50, Smallcap50, और Midcap50 की लिस्ट लाना
+# ✅ Firebase Realtime Database से Stock Lists लाना
 def get_stock_list():
-    stock_ref = db.collection("stocks").document("nifty_lists")
-    stock_data = stock_ref.get().to_dict()
+    stock_ref = db.reference("stocks")
+    stock_data = stock_ref.get()
     if stock_data:
         return {
-            "nifty50": stock_data.get("nifty50", []),
-            "niftysmallcap50": stock_data.get("niftysmallcap50", []),
-            "niftymidcap50": stock_data.get("niftymidcap50", [])
+            "nifty50": stock_data.get("nifty50", {}),
+            "niftysmallcap50": stock_data.get("niftysmallcap50", {}),
+            "niftymidcap50": stock_data.get("niftymidcap50", {})
         }
-    return {"nifty50": [], "niftysmallcap50": [], "niftymidcap50": []}
+    return {"nifty50": {}, "niftysmallcap50": {}, "niftymidcap50": {}}
 
 # ✅ Upstox API से Live Stock Price लाने का फंक्शन
 def get_stock_price(instrument_key):
@@ -66,8 +64,14 @@ async def websocket_endpoint(websocket: WebSocket):
             stock_lists = get_stock_list()
             stock_prices = {}
 
-            for category, stock_list in stock_lists.items():
-                stock_prices[category] = {stock: get_stock_price(stock) for stock in stock_list}
+            for category, stocks in stock_lists.items():
+                stock_prices[category] = {
+                    stock_name: {
+                        "instrument_key": instrument_key,
+                        "ltp": get_stock_price(instrument_key)
+                    } 
+                    for stock_name, instrument_key in stocks.items()
+                }
 
             # 🔹 Live Data सभी Clients को भेजें
             for client in clients:
