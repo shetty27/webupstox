@@ -13,7 +13,7 @@ if not firebase_admin._apps:  # 🔥 Check अगर पहले से Initial
     firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
     cred = credentials.Certificate(firebase_credentials)  # अपने JSON Key का सही Path डालो
     firebase_admin.initialize_app(cred, {
-        'databaseURL': os.getenv(DATABASE_URL) # अपना सही URL डालो
+        'databaseURL': os.getenv("DATABASE_URL") # अपना सही URL डालो
     })
 
 # ✅ Railway से API Key और Secret Key लोड करना
