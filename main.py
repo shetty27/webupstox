@@ -10,11 +10,13 @@ import logging
 # 🔹 Logging Setup (Debugging के लिए)
 logging.basicConfig(level=logging.INFO)
 
+DATABASE_URL = os.getenv("DATABASE_URL")
+
 # 🔹 Firebase Realtime Database Setup
 if not firebase_admin._apps:
     firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
     cred = credentials.Certificate(firebase_credentials)
-    firebase_admin.initialize_app(cred, {"databaseURL": "https://your-project-id.firebaseio.com"})
+    firebase_admin.initialize_app(cred, {"databaseURL": DATABASE_URL})
 
 # 🔹 FastAPI Setup
 app = FastAPI()
