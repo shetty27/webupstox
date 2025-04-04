@@ -1,91 +1,95 @@
-import json
+import requests
 import firebase_admin
 from firebase_admin import credentials, firestore
-from upstox_api.api import Upstox
-import websocket
+from fastapi import FastAPI, WebSocket
+import os
+import json
 import asyncio
-import websockets  # WebSocket Server के लिए
 
-# 🔹 Firebase Setup (Firestore Authentication)
+# 🔹 Firebase Setup
 if not firebase_admin._apps:
-    cred = credentials.Certificate("serviceAccountKey.json")
+    firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
+    cred = credentials.Certificate(firebase_credentials)
     firebase_admin.initialize_app(cred)
+
 db = firestore.client()
 
+# 🔹 FastAPI Setup
+app = FastAPI()
+
+# 🔹 WebSocket Clients List
+clients = []
 
 # ✅ Firestore से Access Token लेना
 def get_access_token():
     doc_ref = db.collection("tokens").document("upstox")
     token_data = doc_ref.get().to_dict()
-    if token_data:
-        return token_data.get("access_token")
-    else:
-        return None
-        
-# 🔹 Upstox API Credentials
-API_KEY = "your-upstox-api-key"
-ACCESS_TOKEN = get_access_token()  # Firestore से Access Token लाओ
+    return token_data.get("access_token") if token_data else None
 
-if not ACCESS_TOKEN:
-    print("❌ Access Token not found in Firestore!")
-    exit()
-
-# 🔹 Upstox Object Create करें
-u = Upstox(API_KEY, ACCESS_TOKEN)
-u.get_master_contract('NSE_EQ')  # NSE के लिए Master Contract लोड करें
-
-# 🔹 Firebase Firestore से Stock List Load करें
+# ✅ Firestore से Nifty50, Smallcap50, और Midcap50 की लिस्ट लाना
 def get_stock_list():
-    stock_list_ref = db.collection("StockLists").document("stocks")
-    stock_data = stock_list_ref.get()
-    if stock_data.exists:
-        return stock_data.to_dict()
-    return {}
+    stock_ref = db.collection("stocks").document("nifty_lists")
+    stock_data = stock_ref.get().to_dict()
+    if stock_data:
+        return {
+            "nifty50": stock_data.get("nifty50", []),
+            "niftysmallcap50": stock_data.get("niftysmallcap50", []),
+            "niftymidcap50": stock_data.get("niftymidcap50", [])
+        }
+    return {"nifty50": [], "niftysmallcap50": [], "niftymidcap50": []}
 
-stock_data = get_stock_list()
+# ✅ Upstox API से Live Stock Price लाने का फंक्शन
+def get_stock_price(instrument_key):
+    access_token = get_access_token()
+    if not access_token:
+        return None
 
-all_symbols = []
-if stock_data:
-    all_symbols = stock_data.get("Nifty50", []) + stock_data.get("NiftySmallcap50", []) + stock_data.get("NiftyMidcap50", [])
+    url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={instrument_key}"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json"
+    }
 
-# 🔹 WebSocket से Real-time Data Send करने के लिए Clients की Dynamic List
-clients = set()
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json().get("data", {}).get(instrument_key, {}).get("ltp")
+    return None
 
-async def send_data_to_clients(data):
-    """ WebSocket Clients को Live Data Send करने का Function """
-    if clients:  # अगर कोई Client Connected है, तभी Data Send करें
-        message = json.dumps(data)
-        await asyncio.wait([ws.send(message) for ws in clients])
+# ✅ WebSocket Handler (Live Updates)
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    clients.append(websocket)
 
-def on_quote_update(ws, data):
-    """ जब भी Upstox से नया Price Update आए, Clients को Send करो """
-    asyncio.run(send_data_to_clients(data))
-
-def on_connect(ws):
-    """ जब WebSocket Connect हो, तब Stocks Subscribe करो """
-    print("✅ WebSocket Connected! Subscribing to Stocks...")
-    u.set_on_quote_update(on_quote_update)
-    u.subscribe(all_symbols, u.get_quote)
-    print(f"✅ Subscribed to {len(all_symbols)} Stocks.")
-
-async def websocket_handler(websocket, path):
-    """ जब Android App Connect होगी, तो उसे Clients List में जोड़ो """
-    clients.add(websocket)
-    print(f"🔗 New Client Connected! Total Clients: {len(clients)}")
-    
     try:
-        async for message in websocket:
-            pass  # अभी Client से कोई Request नहीं आ रही, बस Data भेज रहे हैं
+        while True:
+            stock_lists = get_stock_list()
+            stock_prices = {}
+
+            for category, stock_list in stock_lists.items():
+                stock_prices[category] = {stock: get_stock_price(stock) for stock in stock_list}
+
+            # 🔹 Live Data सभी Clients को भेजें
+            for client in clients:
+                await client.send_json(stock_prices)
+
+            await asyncio.sleep(3)  # हर 3 सेकंड में अपडेट करें
+    except Exception as e:
+        print(f"WebSocket Error: {e}")
     finally:
         clients.remove(websocket)
-        print(f"❌ Client Disconnected! Remaining Clients: {len(clients)}")
 
-# 🔹 WebSocket Server Run करो (Android App के लिए)
-start_server = websockets.serve(websocket_handler, "0.0.0.0", 8765)
+# ✅ Server Status Check
+@app.get("/")
+def home():
+    return {"message": "WebSocket Server is Running!"}
 
-async def main():
-    await start_server
-    u.set_on_connect(on_connect)
-    u.start_websocket(True)
+@app.get("/ping")
+@app.head("/ping")
+def ping():
+    return {"status": "OK"}
 
-asyncio.run(main())
+# ✅ Run FastAPI Server (Only for Local Testing)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
