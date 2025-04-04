@@ -8,7 +8,8 @@ import requests
 
 # ✅ Firebase Initialization Check
 if not firebase_admin._apps:  # 🔥 Check अगर पहले से Initialize है तो दोबारा मत करो
-    cred = credentials.Certificate(os.getenv("FIREBASE_CREDENTIALS"))  # अपने JSON Key का सही Path डालो
+    firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
+    cred = credentials.Certificate(firebase_credentials)  # अपने JSON Key का सही Path डालो
     firebase_admin.initialize_app(cred, {
         'databaseURL': os.getenv(DATABASE_URL) # अपना सही URL डालो
     })
