@@ -1,10 +1,14 @@
 import requests
 import firebase_admin
 from firebase_admin import credentials, db
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import os
 import json
 import asyncio
+import logging
+
+# 🔹 Logging Setup (Debugging के लिए)
+logging.basicConfig(level=logging.INFO)
 
 # 🔹 Firebase Realtime Database Setup
 if not firebase_admin._apps:
@@ -15,8 +19,8 @@ if not firebase_admin._apps:
 # 🔹 FastAPI Setup
 app = FastAPI()
 
-# 🔹 WebSocket Clients List
-clients = []
+# 🔹 Active WebSocket Clients List
+clients = set()
 
 # ✅ Railway से API Key और Secret Key लोड करना
 UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
@@ -38,16 +42,17 @@ def get_stock_list():
         "niftymidcap50": stock_data.get("niftymidcap50", {}) if stock_data else {}
     }
 
-# ✅ Upstox API से Live Stock Price लाने का फंक्शन (API Key और Secret Key का उपयोग)
+# ✅ Upstox API से Live Stock Price लाने का फंक्शन
 def get_stock_price(instrument_key):
     access_token = get_access_token()
     if not access_token:
+        logging.error("❌ Access Token Not Found!")
         return None
 
     url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={instrument_key}"
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "X-Api-Key": UPSTOX_API_KEY,  # ✅ API Key Set करना जरूरी
+        "X-Api-Key": UPSTOX_API_KEY,
         "X-Api-Secret": UPSTOX_SECRET_KEY,
         "Accept": "application/json"
     }
@@ -55,13 +60,16 @@ def get_stock_price(instrument_key):
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
         return response.json().get("data", {}).get(instrument_key, {}).get("ltp")
+    
+    logging.error(f"❌ Failed to fetch price for {instrument_key}: {response.text}")
     return None
 
 # ✅ WebSocket Handler (Live Updates)
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    clients.append(websocket)
+    clients.add(websocket)
+    logging.info("🔗 New WebSocket Connection Established!")
 
     try:
         while True:
@@ -78,14 +86,25 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
 
             # 🔹 Live Data सभी Clients को भेजें
+            disconnected_clients = set()
             for client in clients:
-                await client.send_json(stock_prices)
+                try:
+                    await client.send_json(stock_prices)
+                except WebSocketDisconnect:
+                    logging.warning("🔌 Client Disconnected!")
+                    disconnected_clients.add(client)
+
+            # 🔹 Remove Disconnected Clients
+            for client in disconnected_clients:
+                clients.remove(client)
 
             await asyncio.sleep(3)  # हर 3 सेकंड में अपडेट करें
+
     except Exception as e:
-        print(f"❌ WebSocket Error: {e}")
+        logging.error(f"❌ WebSocket Error: {e}")
     finally:
         clients.remove(websocket)
+        logging.info("🔌 Connection Closed!")
 
 # ✅ Server Status Check
 @app.get("/")
