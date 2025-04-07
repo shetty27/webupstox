@@ -48,14 +48,16 @@ async def fetch_all_prices(session, instrument_keys, access_token):
     }
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
+            print("API Status:", resp.status)
             if resp.status == 200:
                 data = await resp.json()
+                print("📡 API Raw Response:\n", json.dumps(data, indent=2))  # 👈 ADD THIS
                 return data.get("data", {})
             else:
-                print(f"Error status code: {resp.status}")
+                print(f"❌ Error status code: {resp.status}")
                 return {}
     except Exception as e:
-        print("Error fetching batch price:", e)
+        print("⚠️ Error fetching batch price:", e)
         return {}
 
 async def broadcast_data(data):
