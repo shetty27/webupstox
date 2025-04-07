@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Allow all CORS for development
+# CORS settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,7 +18,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global variable to store clients
 clients = set()
 
 # Firebase initialization
@@ -35,7 +34,7 @@ def initialize_firebase():
 
 initialize_firebase()
 
-# Get access token from Firestore
+# Firestore access token fetch
 def get_access_token_from_firestore():
     doc_ref = firestore.client().collection("tokens").document("upstox")
     doc = doc_ref.get()
@@ -43,9 +42,9 @@ def get_access_token_from_firestore():
         return doc.to_dict().get("access_token")
     return None
 
-# Fetch stock price from Upstox API
-async def fetch_stock_price(session, instrument_key, access_token):
-    url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={instrument_key}"
+# Batch fetch prices
+async def fetch_all_prices(session, instrument_keys, access_token):
+    url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={','.join(instrument_keys)}"
     headers = {
         "accept": "application/json",
         "Api-Version": "2.0",
@@ -57,12 +56,13 @@ async def fetch_stock_price(session, instrument_key, access_token):
                 data = await resp.json()
                 return data.get("data", {})
             else:
+                print(f"Error status code: {resp.status}")
                 return {}
     except Exception as e:
-        print("Error fetching price:", e)
+        print("Error fetching batch price:", e)
         return {}
 
-# Broadcast data to all connected clients
+# Broadcast to all clients
 async def broadcast_data(data):
     if clients:
         await asyncio.wait([client.send_text(json.dumps(data)) for client in clients])
@@ -73,29 +73,28 @@ async def price_updater():
         while True:
             access_token = get_access_token_from_firestore()
             if not access_token:
-                print("No access token found in Firestore.")
+                print("No access token found.")
                 await asyncio.sleep(10)
                 continue
 
             ref = db.reference("stocks/nifty50")
             symbols_dict = ref.get()  # { "RELIANCE": "NSE_EQ|INE002A01018", ... }
 
-            live_data = {}
             if symbols_dict:
-                tasks = [
-                    fetch_stock_price(session, ikey, access_token)
-                    for ikey in symbols_dict.values()
-                ]
-                responses = await asyncio.gather(*tasks)
+                instrument_keys = list(symbols_dict.values())
+                response_data = await fetch_all_prices(session, instrument_keys, access_token)
 
-                for symbol, price_data in zip(symbols_dict.keys(), responses):
-                    live_data[symbol] = price_data
+                # Map response to symbol
+                live_data = {}
+                for symbol, ikey in symbols_dict.items():
+                    stock_data = response_data.get(ikey, {})
+                    ltp = stock_data.get("last_price")
+                    live_data[symbol] = ltp
 
                 await broadcast_data(live_data)
 
-            await asyncio.sleep(5)  # Repeat every 5 seconds
+            await asyncio.sleep(20)
 
-# Start price update task on app startup
 @app.on_event("startup")
 async def on_startup():
     asyncio.create_task(price_updater())
@@ -107,6 +106,6 @@ async def websocket_endpoint(websocket: WebSocket):
     clients.add(websocket)
     try:
         while True:
-            await websocket.receive_text()  # Keep connection alive
+            await websocket.receive_text()
     except:
         clients.remove(websocket)
