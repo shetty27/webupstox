@@ -80,15 +80,20 @@ async def price_updater():
                 instrument_keys = list(symbols_dict.values())
                 response_data = await fetch_all_prices(session, instrument_keys, access_token)
 
+                 # 🔁 Convert Firebase format to API format (| => :)
+                ikey_to_symbol = {v.replace("|", ":"): k for k, v in symbols_dict.items()}
+
+                # ✅ Map API response to original symbols
                 live_data = {}
-                for symbol, ikey in symbols_dict.items():
-                    stock_data = response_data.get(ikey, {})
-                    ltp = stock_data.get("last_price")
-                    live_data[symbol] = ltp
+                for ikey_colon, stock_data in response_data.items():
+                    symbol = ikey_to_symbol.get(ikey_colon)
+                    if symbol:
+                        ltp = stock_data.get("last_price")
+                        live_data[symbol] = ltp
 
                 await broadcast_data(live_data)
-
-            await asyncio.sleep(5)
+                
+            await asyncio.sleep(15)
 
 @app.on_event("startup")
 async def on_startup():
