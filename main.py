@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
+# CORS settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,7 +20,10 @@ app.add_middleware(
 
 clients = set()
 
+# Firebase initialization
 firebase_initialized = False
+
+
 def initialize_firebase():
     global firebase_initialized
     if not firebase_initialized:
@@ -30,8 +34,11 @@ def initialize_firebase():
         })
         firebase_initialized = True
 
+
 initialize_firebase()
 
+
+# Firestore access token fetch
 def get_access_token_from_firestore():
     doc_ref = firestore.client().collection("tokens").document("upstox")
     doc = doc_ref.get()
@@ -39,8 +46,11 @@ def get_access_token_from_firestore():
         return doc.to_dict().get("access_token")
     return None
 
+
+# Batch fetch prices
 async def fetch_all_prices(session, instrument_keys, access_token):
-    url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={','.join(instrument_keys)}"
+    joined_keys = ",".join(instrument_keys)
+    url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={joined_keys}"
     headers = {
         "accept": "application/json",
         "Api-Version": "2.0",
@@ -48,21 +58,24 @@ async def fetch_all_prices(session, instrument_keys, access_token):
     }
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
-            
             if resp.status == 200:
                 data = await resp.json()
                 return data.get("data", {})
             else:
-                print(f"❌ Error status code: {resp.status}")
+                print(f"Error status code: {resp.status}")
                 return {}
     except Exception as e:
-        print("⚠️ Error fetching batch price:", e)
+        print("Error fetching batch price:", e)
         return {}
 
+
+# Broadcast to all clients
 async def broadcast_data(data):
     if clients:
         await asyncio.wait([client.send_text(json.dumps(data)) for client in clients])
 
+
+# Price update loop
 async def price_updater():
     async with aiohttp.ClientSession() as session:
         while True:
@@ -73,31 +86,32 @@ async def price_updater():
                 continue
 
             ref = db.reference("stocks/nifty50")
-            symbols_dict = ref.get()
+            symbols_dict = ref.get()  # { "RELIANCE": "NSE_EQ|INE002A01018", ... }
 
             if symbols_dict:
                 instrument_keys = list(symbols_dict.values())
                 response_data = await fetch_all_prices(session, instrument_keys, access_token)
 
-                 # 🔁 Convert Firebase format to API format (| => :)
-                ikey_to_symbol = {v.replace("|", ":"): k for k, v in symbols_dict.items()}
-
-                # ✅ Map API response to original symbols
+                # Map response to symbol
                 live_data = {}
-                for ikey_colon, stock_data in response_data.items():
-                    symbol = ikey_to_symbol.get(ikey_colon)
-                    if symbol:
-                        ltp = stock_data.get("last_price")
-                        live_data[symbol] = ltp
+                for symbol, ikey in symbols_dict.items():
+                    upstox_key_format = ikey.replace("|", ":")
+                    stock_data = response_data.get(upstox_key_format, {})
+                    ltp = stock_data.get("last_price")
+                    live_data[symbol] = ltp
 
+                print("📈 Live Data Received:\n", json.dumps(live_data, indent=2))
                 await broadcast_data(live_data)
-                
-            await asyncio.sleep(15)
+
+            await asyncio.sleep(5)
+
 
 @app.on_event("startup")
 async def on_startup():
     asyncio.create_task(price_updater())
 
+
+# WebSocket endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
