@@ -48,11 +48,10 @@ async def fetch_all_prices(session, instrument_keys, access_token):
     }
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
-            print("API Status:", resp.status)
+            
             if resp.status == 200:
                 data = await resp.json()
-                print("📡 API Raw Response:\n", json.dumps(data, indent=2))  # 👈 ADD THIS
-                return data.get("data", {})
+                 return data.get("data", {})
             else:
                 print(f"❌ Error status code: {resp.status}")
                 return {}
