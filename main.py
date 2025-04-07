@@ -51,7 +51,7 @@ async def fetch_all_prices(session, instrument_keys, access_token):
             
             if resp.status == 200:
                 data = await resp.json()
-                 return data.get("data", {})
+                return data.get("data", {})
             else:
                 print(f"❌ Error status code: {resp.status}")
                 return {}
