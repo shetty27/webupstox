@@ -1,89 +1,70 @@
+import json
+import asyncio
+import websockets
 import firebase_admin
 from firebase_admin import credentials, db
-import json
-import threading
-import time
-import uvicorn
-import requests
-import os
 from fastapi import FastAPI, WebSocket
+import aiohttp
+import os
 
-# ✅ Firebase Initialization Check
-if not firebase_admin._apps:  # 🔥 Check अगर पहले से Initialize है तो दोबारा मत करो
-    firebase_credentials = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
-    cred = credentials.Certificate(firebase_credentials)  # अपने JSON Key का सही Path डालो
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': os.getenv("DATABASE_URL") # अपना सही URL डालो
-    })
+# Firebase initialization
+cred = credentials.Certificate(json.loads(os.getenv("FIREBASE_CREDENTIALS")))
+firebase_admin.initialize_app(cred, {
+    'databaseURL': os.getenv("FIREBASE_DB_URL")
+})
 
-# ✅ Railway से API Key और Secret Key लोड करना
+# Upstox Credentials
 UPSTOX_API_KEY = os.getenv("UPSTOX_API_KEY")
-UPSTOX_SECRET_KEY = os.getenv("UPSTOX_SECRET_KEY")
+UPSTOX_ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 
-# ✅ FastAPI App Init
 app = FastAPI()
+clients = set()
 
-# ✅ Firebase से Stock List लाने का Function
-def get_stock_list():
-    ref = db.reference("/stocks/nifty50")  # 🔥 Firebase से Data लाओ
-    stock_data = ref.get()
-    
-    if not stock_data:
-        print("⚠️ Firebase से कोई डेटा नहीं मिला!")
-        return {}
-    
-    print("✅ Firebase Data:", stock_data)
-    return stock_data  # Dictionary Format में Return होगा
-
-# ✅ Upstox API से LTP लाने का Function
-def get_stock_ltp(instrument_keys):
+# Function to fetch stock prices using Upstox API
+async def fetch_stock_price(session, instrument_key):
+    url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={instrument_key}"
     headers = {
-        "x-api-key": UPSTOX_API_KEY,
-        "Content-Type": "application/json"
+        "accept": "application/json",
+        "Api-Version": "2.0",
+        "Authorization": f"Bearer {UPSTOX_ACCESS_TOKEN}"
     }
-    
-    payload = {"instrument_keys": instrument_keys}
-    response = requests.post(UPSTOX_LTP_URL, headers=headers, json=payload)
+    async with session.get(url, headers=headers) as resp:
+        data = await resp.json()
+        return data.get("data", {})
 
-    if response.status_code == 200:
-        data = response.json()
-        return data.get("ltp", {})
-    else:
-        print(f"❌ Upstox API Error: {response.text}")
-        return {}
+# Broadcast data to all clients
+async def broadcast_data(data):
+    if clients:
+        await asyncio.wait([client.send_text(json.dumps(data)) for client in clients])
 
-# ✅ WebSocket Endpoint
+# Main loop to fetch and send data
+async def price_updater():
+    async with aiohttp.ClientSession() as session:
+        while True:
+            ref = db.reference("stocks/nifty50")
+            symbols_dict = ref.get()  # { "RELIANCE": "NSE_EQ|INE002A01018", ... }
+
+            live_data = {}
+            if symbols_dict:
+                tasks = [fetch_stock_price(session, ikey) for ikey in symbols_dict.values()]
+                responses = await asyncio.gather(*tasks)
+
+                for symbol, price_data in zip(symbols_dict.keys(), responses):
+                    live_data[symbol] = price_data
+
+                await broadcast_data(live_data)
+            await asyncio.sleep(5)  # update every 5 seconds
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(price_updater())
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("✅ WebSocket Connected!")
-    
+    clients.add(websocket)
     try:
         while True:
-            stocks_data = get_stock_list()
-            if stocks_data:
-                instrument_keys = list(stocks_data.values())
-                ltp_data = get_stock_ltp(instrument_keys)
-
-                # 🔥 Data Prepare
-                final_data = {
-                    "nifty50": {
-                        stock: {"instrument_key": stocks_data[stock], "ltp": ltp_data.get(stocks_data[stock], "N/A")}
-                        for stock in stocks_data
-                    }
-                }
-
-                payload = json.dumps(final_data)
-                print("📌 Sending Data to WebSocket:", payload)
-                await websocket.send_text(payload)
-
-            await asyncio.sleep(5)  # 🔄 5 सेकंड में Data Refresh होगा
-
-    except Exception as e:
-        print(f"❌ WebSocket Error: {e}")
-    finally:
-        print("🔴 WebSocket Closed")
-
-# ✅ FastAPI Run (Railway पर Auto Start होगा)
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+            await websocket.receive_text()  # Just to keep it alive
+    except:
+        clients.remove(websocket)
