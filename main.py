@@ -1,26 +1,13 @@
 import os
 import json
-import asyncio
 import aiohttp
+import asyncio
 import firebase_admin
-from firebase_admin import credentials, firestore, db
-from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
+from firebase_admin import credentials, db, firestore
 
-app = FastAPI()
-
-# CORS settings
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-clients = set()
-
-# Firebase initialization
+# -----------------------------
+# Firebase Initialization
+# -----------------------------
 firebase_initialized = False
 def initialize_firebase():
     global firebase_initialized
@@ -34,78 +21,57 @@ def initialize_firebase():
 
 initialize_firebase()
 
-# Firestore access token fetch
-def get_access_token_from_firestore():
-    doc_ref = firestore.client().collection("tokens").document("upstox")
-    doc = doc_ref.get()
+# -----------------------------
+# Get Access Token from Firestore
+# -----------------------------
+def get_access_token():
+    doc = firestore.client().collection("tokens").document("upstox").get()
     if doc.exists:
         return doc.to_dict().get("access_token")
     return None
 
-# Batch fetch prices
-async def fetch_all_prices(session, instrument_keys, access_token):
+# -----------------------------
+# Fetch Batch Prices
+# -----------------------------
+async def fetch_prices():
+    access_token = get_access_token()
+    if not access_token:
+        print("❌ Access token not found in Firestore.")
+        return
+
+    ref = db.reference("stocks/nifty50")
+    symbols_dict = ref.get()  # {"RELIANCE": "NSE_EQ|INE002A01018", ...}
+
+    if not symbols_dict:
+        print("❌ No symbols found in Firebase Realtime DB.")
+        return
+
+    instrument_keys = list(symbols_dict.values())
     url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={','.join(instrument_keys)}"
     headers = {
         "accept": "application/json",
         "Api-Version": "2.0",
         "Authorization": f"Bearer {access_token}"
     }
-    try:
-        async with session.get(url, headers=headers, timeout=10) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("data", {})
-            else:
-                print(f"Error status code: {resp.status}")
-                return {}
-    except Exception as e:
-        print("Error fetching batch price:", e)
-        return {}
 
-# Broadcast to all clients
-async def broadcast_data(data):
-    if clients:
-        await asyncio.wait([client.send_text(json.dumps(data)) for client in clients])
-
-# Price update loop
-async def price_updater():
     async with aiohttp.ClientSession() as session:
-        while True:
-            access_token = get_access_token_from_firestore()
-            if not access_token:
-                print("No access token found.")
-                await asyncio.sleep(10)
-                continue
+        try:
+            async with session.get(url, headers=headers, timeout=10) as resp:
+                print("✅ Status Code:", resp.status)
+                if resp.status == 200:
+                    data = await resp.json()
+                    response_data = data.get("data", {})
+                    for symbol, ikey in symbols_dict.items():
+                        stock_data = response_data.get(ikey)
+                        ltp = stock_data.get("last_price") if stock_data else None
+                        print(f"{symbol}: {ltp}")
+                else:
+                    print("❌ Error Response:", await resp.text())
+        except Exception as e:
+            print("❌ Exception while fetching:", e)
 
-            ref = db.reference("stocks/nifty50")
-            symbols_dict = ref.get()  # { "RELIANCE": "NSE_EQ|INE002A01018", ... }
-
-            if symbols_dict:
-                instrument_keys = list(symbols_dict.values())
-                response_data = await fetch_all_prices(session, instrument_keys, access_token)
-
-                # Map response to symbol
-                live_data = {}
-                for symbol, ikey in symbols_dict.items():
-                    stock_data = response_data.get(ikey, {})
-                    ltp = stock_data.get("last_price")
-                    live_data[symbol] = ltp
-
-                await broadcast_data(live_data)
-
-            await asyncio.sleep(20)
-
-@app.on_event("startup")
-async def on_startup():
-    asyncio.create_task(price_updater())
-
-# WebSocket endpoint
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    clients.add(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except:
-        clients.remove(websocket)
+# -----------------------------
+# Run Async Test
+# -----------------------------
+if __name__ == "__main__":
+    asyncio.run(fetch_prices())
