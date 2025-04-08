@@ -95,7 +95,7 @@ async def price_updater():
                 # Map response to symbol
                 live_data = {}
                 for symbol, ikey in symbols_dict.items():
-                    upstox_key_format = ikey.replace("|", ":")
+                    upstox_key_format = f"NSE_EQ:{symbol}"  # Symbol से key बनाना
                     stock_data = response_data.get(upstox_key_format, {})
                     ltp = stock_data.get("last_price")
                     live_data[symbol] = ltp
