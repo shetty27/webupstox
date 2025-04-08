@@ -99,9 +99,12 @@ async def price_updater():
                 # Map response to symbol
                 live_data = {}
                 for symbol, ikey in symbols_dict.items():
-                    stock_data = response_data.get(ikey, {})
+                    response_key = f"NSE_EQ:{symbol}"  # ✅ इस key से match करना चाहिए
+                    stock_data = response_data.get(response_key, {})
                     ltp = stock_data.get("last_price")
                     live_data[symbol] = ltp
+                    print("✅ Symbol:", symbol, "| Response Key:", response_key, "| Last Price:", ltp)
+
                    
                 await broadcast_data(live_data)
 
