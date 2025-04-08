@@ -99,7 +99,7 @@ async def price_updater():
                     stock_data = response_data.get(upstox_key_format, {})
                     ltp = stock_data.get("last_price")
                     live_data[symbol] = ltp
-                    print("UKF:\n",upstox_key_format,"\nLast price: ",ltp))
+                    print("UKF:\n",upstox_key_format,"\nLast price: ",ltp)
                     
                     
                 print("📈 Live Data Received:\n", json.dumps(live_data, indent=2))
