@@ -27,7 +27,7 @@ firebase_initialized = False
 def initialize_firebase():
     global firebase_initialized
     if not firebase_initialized:
-        cred_dict = json.loads(os.getenv("FIREBASE_CREDENTIALS"))
+        cred_dict = json.loads(os.getenv("FIREBASE_CREDENTIALS")
         cred = credentials.Certificate(cred_dict)
         firebase_admin.initialize_app(cred, {
             'databaseURL': os.getenv("DATABASE_URL")
