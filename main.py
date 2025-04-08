@@ -58,13 +58,9 @@ async def fetch_all_prices(session, instrument_keys, access_token):
 
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
-            print("📡 Request URL:", url)
-            print("🔐 Headers:", headers)
-            print("🔄 Status Code:", resp.status)
 
             if resp.status == 200:
                 data = await resp.json()
-                print("📦 Full Response Data:\n", json.dumps(data, indent=2))
                 return data.get("data", {})
             else:
                 print(f"❌ Error status code: {resp.status}")
@@ -118,7 +114,6 @@ async def price_updater():
                     stock_data = response_data.get(response_key, {})
                     ltp = stock_data.get("last_price")
                     live_data[index_name][symbol] = ltp
-                    print("✅ Symbol:", symbol, "| Index:", index_name, "| Last Price:", ltp)
 
                 await broadcast_data(live_data)
 
