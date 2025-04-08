@@ -42,7 +42,6 @@ def get_access_token_from_firestore():
     doc = doc_ref.get()
     if doc.exists:
         return doc.to_dict().get("access_token")
-        print("🟢 Access Token:", access_token)
 
     return None
 
@@ -58,6 +57,7 @@ async def fetch_all_prices(session, instrument_keys, access_token):
         "Authorization": f"Bearer {access_token}"
     }
 
+    print("🟢 Access Token:", access_token)
     try:
         async with session.get(url, headers=headers, timeout=10) as resp:
             if resp.status == 200:
