@@ -42,6 +42,8 @@ def get_access_token_from_firestore():
     doc = doc_ref.get()
     if doc.exists:
         return doc.to_dict().get("access_token")
+        print("🟢 Access Token:", access_token)
+
     return None
 
 # Batch fetch prices
