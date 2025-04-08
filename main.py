@@ -42,13 +42,12 @@ def get_access_token_from_firestore():
     doc = doc_ref.get()
     if doc.exists:
         return doc.to_dict().get("access_token")
-
     return None
 
 # Batch fetch prices
 async def fetch_all_prices(session, instrument_keys, access_token):
     joined_keys = ",".join(instrument_keys)
-    encoded_keys = quote(joined_keys, safe=',')  # ✅ encode | to %7C
+    encoded_keys = quote(joined_keys, safe=',')
     url = f"https://api.upstox.com/v2/market-quote/ltp?instrument_key={encoded_keys}"
 
     headers = {
@@ -62,7 +61,7 @@ async def fetch_all_prices(session, instrument_keys, access_token):
             print("📡 Request URL:", url)
             print("🔐 Headers:", headers)
             print("🔄 Status Code:", resp.status)
-    
+
             if resp.status == 200:
                 data = await resp.json()
                 print("📦 Full Response Data:\n", json.dumps(data, indent=2))
@@ -89,24 +88,37 @@ async def price_updater():
                 await asyncio.sleep(10)
                 continue
 
-            all_symbols = {}
-            for path in ["stocks/nifty50", "stocks/niftymidcap50", "stocks/niftysmallcap50"]:
+            index_refs = {
+                "NIFTY50": "stocks/nifty50",
+                "MIDCAP": "stocks/niftymidcap50",
+                "SMALLCAP": "stocks/niftysmallcap50"
+            }
+
+            all_instrument_keys = []
+            symbol_index_map = {}  # e.g. {"RELIANCE": ("NSE_EQ|xxx", "NIFTY50")}
+
+            for index_name, path in index_refs.items():
                 ref = db.reference(path)
                 symbols_dict = ref.get()
                 if symbols_dict:
-                    all_symbols.update(symbols_dict)
+                    for symbol, ikey in symbols_dict.items():
+                        all_instrument_keys.append(ikey)
+                        symbol_index_map[symbol] = (ikey, index_name)
 
-            if all_symbols:
-                instrument_keys = list(all_symbols.values())
-                response_data = await fetch_all_prices(session, instrument_keys, access_token)
+            if all_instrument_keys:
+                response_data = await fetch_all_prices(session, all_instrument_keys, access_token)
+                live_data = {
+                    "NIFTY50": {},
+                    "MIDCAP": {},
+                    "SMALLCAP": {}
+                }
 
-                live_data = {}
-                for symbol, ikey in all_symbols.items():
+                for symbol, (ikey, index_name) in symbol_index_map.items():
                     response_key = f"NSE_EQ:{symbol}"
                     stock_data = response_data.get(response_key, {})
                     ltp = stock_data.get("last_price")
-                    live_data[symbol] = ltp
-                    print("✅ Symbol:", symbol, "| Response Key:", response_key, "| Last Price:", ltp)
+                    live_data[index_name][symbol] = ltp
+                    print("✅ Symbol:", symbol, "| Index:", index_name, "| Last Price:", ltp)
 
                 await broadcast_data(live_data)
 
