@@ -89,23 +89,25 @@ async def price_updater():
                 await asyncio.sleep(10)
                 continue
 
-            ref = db.reference("stocks/nifty50")
-            symbols_dict = ref.get()  # { "RELIANCE": "NSE_EQ|INE002A01018", ... }
+            all_symbols = {}
+            for path in ["stocks/nifty50", "stocks/niftymidcap50", "stocks/niftysmallcap50"]:
+                ref = db.reference(path)
+                symbols_dict = ref.get()
+                if symbols_dict:
+                    all_symbols.update(symbols_dict)
 
-            if symbols_dict:
-                instrument_keys = list(symbols_dict.values())
+            if all_symbols:
+                instrument_keys = list(all_symbols.values())
                 response_data = await fetch_all_prices(session, instrument_keys, access_token)
 
-                # Map response to symbol
                 live_data = {}
-                for symbol, ikey in symbols_dict.items():
-                    response_key = f"NSE_EQ:{symbol}"  # ✅ इस key से match करना चाहिए
+                for symbol, ikey in all_symbols.items():
+                    response_key = f"NSE_EQ:{symbol}"
                     stock_data = response_data.get(response_key, {})
                     ltp = stock_data.get("last_price")
                     live_data[symbol] = ltp
                     print("✅ Symbol:", symbol, "| Response Key:", response_key, "| Last Price:", ltp)
 
-                   
                 await broadcast_data(live_data)
 
             await asyncio.sleep(15)
