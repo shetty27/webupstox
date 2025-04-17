@@ -103,19 +103,21 @@ async def price_updater():
 
             if all_instrument_keys:
                 response_data = await fetch_all_prices(session, all_instrument_keys, access_token)
-                live_data = {
-                    "NIFTY50": {},
-                    "MIDCAP": {},
-                    "SMALLCAP": {}
-                }
-
+                live_data = []
                 for symbol, (ikey, index_name) in symbol_index_map.items():
                     response_key = f"NSE_EQ:{symbol}"
                     stock_data = response_data.get(response_key, {})
                     ltp = stock_data.get("last_price")
-                    live_data[index_name][symbol] = ltp
+
+                    if ltp is not None:
+                        live_data.append({
+                        "name": symbol,
+                        "ltp": ltp,
+                        "group": index_name.lower()  # e.g., "nifty50", "midcap", "smallcap"
+                        })
 
                 await broadcast_data(live_data)
+
 
             await asyncio.sleep(15)
 
